@@ -32,7 +32,7 @@ button.p{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
 </style></head><body>
 <div class="app">
 <div class="stage"><canvas id="cv"></canvas>
-<div class="hint">丸いハンドルをドラッグで区切り線を移動・傾け / 画像をドラッグで位置調整 / ホイールでズーム</div></div>
+<div class="hint">丸いハンドルをドラッグで区切り線を移動・傾け / 画像をドラッグで位置調整 / ホイールでズーム / Shift+ホイールで回転 / スマホは2本指でズーム＋回転</div></div>
 <div class="side">
 <div class="card"><h1>斜め分割サムネメーカー</h1>
 <div class="row"><button class="p" id="add">画像を追加(2枚〜)</button><span class="hint">ドロップも可</span></div>
@@ -49,6 +49,8 @@ button.p{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
 <label><span>横区切りの傾き</span><input type="range" id="kh" min="-35" max="35" value="0"></label>
 <label><span>区切りの太さ</span><input type="range" id="gap" min="0" max="40" value="8"></label>
 <label><span>選択画像ズーム</span><input type="range" id="zm" min="100" max="400" value="100"></label>
+<label><span>選択画像の回転</span><input type="range" id="rt" min="-180" max="180" step="1" value="0"><output id="rv" style="width:42px;text-align:right">0°</output></label>
+<div class="row"><button id="rl">⟲ 90°</button><button id="rr">⟳ 90°</button><button id="r0">回転リセット</button></div>
 <div class="row"><button id="rst">傾きをリセット</button><button id="hd">ハンドル表示切替</button></div></div>
 <div class="card"><h2>書き出し</h2><div class="row"><select id="fmt"><option value="png">PNG</option><option value="jpg">JPG</option></select><button class="p" id="exp">保存する</button></div></div>
 </div></div>
@@ -56,7 +58,7 @@ button.p{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
 <script>
 const $=s=>document.querySelector(s),cv=$('#cv'),ctx=cv.getContext('2d');
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),rnd=(a,b)=>a+Math.random()*(b-a);
-let W=1080,H=1080,items=[],L=null,sel=-1,drag=null,showH=true;
+let W=1080,H=1080,items=[],L=null,sel=-1,drag=null,showH=true,ptrs=new Map(),G=null;
 const val=id=>+$('#'+id).value;
 function dist(n,R){const a=Array(R).fill(Math.floor(n/R));for(let i=0;i<n%R;i++)a[i]++;return a}
 function gen(){
@@ -94,8 +96,9 @@ function draw(exp){
  const P=polys();
  P.forEach((p,i)=>{const it=items[i];ctx.save();path(p);ctx.clip();
   const xs=p.map(q=>q[0]),ys=p.map(q=>q[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),bw=x1-x0,bh=y1-y0,cx=(x0+x1)/2,cy=(y0+y1)/2;
-  if(it){const sc=Math.max(bw/it.img.width,bh/it.img.height)*it.s,dw=it.img.width*sc,dh=it.img.height*sc,mx=Math.max(0,(dw-bw)/2),my=Math.max(0,(dh-bh)/2);
-   it.ox=clamp(it.ox,-mx,mx);it.oy=clamp(it.oy,-my,my);ctx.drawImage(it.img,cx+it.ox-dw/2,cy+it.oy-dh/2,dw,dh)}
+  if(it){const th=(it.r||0)*Math.PI/180,c=Math.cos(th),s=Math.sin(th),Wr=bw*Math.abs(c)+bh*Math.abs(s),Hr=bw*Math.abs(s)+bh*Math.abs(c),sc=Math.max(Wr/it.img.width,Hr/it.img.height)*it.s,dw=it.img.width*sc,dh=it.img.height*sc,mx=Math.max(0,(dw-Wr)/2),my=Math.max(0,(dh-Hr)/2);
+   let px=clamp(it.ox*c+it.oy*s,-mx,mx),py=clamp(-it.ox*s+it.oy*c,-my,my);it.ox=px*c-py*s;it.oy=px*s+py*c;
+   ctx.translate(cx+it.ox,cy+it.oy);ctx.rotate(th);ctx.drawImage(it.img,-dw/2,-dh/2,dw,dh)}
   else{ctx.fillStyle='#8884';ctx.fillRect(x0,y0,bw,bh);ctx.fillStyle='#888';ctx.font=(W/12)+'px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('+',cx,cy)}
   ctx.restore()});
  if(g>0){ctx.strokeStyle=bg;ctx.lineWidth=g;ctx.lineJoin='miter';P.forEach(p=>{path(p);ctx.stroke()})}
@@ -109,21 +112,21 @@ function thumbs(){const t=$('#th');t.innerHTML='';items.forEach((it,i)=>{const d
  d.innerHTML='<img src="'+it.url+'" alt=""><div><b data-a="l">◀</b><b data-a="x">✕</b><b data-a="r">▶</b></div>';
  d.onclick=e=>{const a=e.target.dataset.a;if(a=='x'){items.splice(i,1);sel=-1;gen();thumbs()}
   else if(a){const j=a=='l'?i-1:i+1;if(j>=0&&j<items.length){[items[i],items[j]]=[items[j],items[i]];sel=j}thumbs();draw()}
-  else{sel=i;$('#zm').value=it.s*100;thumbs();draw()}};t.appendChild(d)})}
+  else{sel=i;thumbs();sync();draw()}};t.appendChild(d)})}
 async function add(files){
  const fs=[...files].filter(f=>f.type.startsWith('image/'));
  const ims=await Promise.all(fs.map(f=>new Promise(res=>{const u=URL.createObjectURL(f),im=new Image();im.onload=()=>res({img:im,url:u,s:1,ox:0,oy:0});im.onerror=()=>res(null);im.src=u})));
  ims.filter(Boolean).forEach(i=>items.push(i));gen();thumbs()}
 function pt(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]}
-cv.onpointerdown=e=>{const[x,y]=pt(e),rad=22*W/cv.getBoundingClientRect().width;
+cv.onpointerdown=e=>{ptrs.set(e.pointerId,pt(e));if(ptrs.size==2){startG();cv.setPointerCapture(e.pointerId);return}const[x,y]=pt(e),rad=22*W/cv.getBoundingClientRect().width;
  const h=showH&&handles().find(h=>Math.hypot(h.x-x,h.y-y)<rad);
- if(h)drag={h};else{const i=polys().findIndex(p=>inP(p,x,y));sel=i;drag=i>=0?{i,x,y}:null;if(i>=0&&items[i])$('#zm').value=items[i].s*100;thumbs()}
+ if(h)drag={h};else{const i=polys().findIndex(p=>inP(p,x,y));sel=i;drag=i>=0?{i,x,y}:null;thumbs();sync()}
  cv.setPointerCapture(e.pointerId);draw()};
-cv.onpointermove=e=>{if(!drag)return;const[x,y]=pt(e);
+cv.onpointermove=e=>{if(ptrs.has(e.pointerId))ptrs.set(e.pointerId,pt(e));if(G){moveG();return}if(!drag)return;const[x,y]=pt(e);
  if(drag.h)mv(drag.h,x,y);else if(items[drag.i]){items[drag.i].ox+=x-drag.x;items[drag.i].oy+=y-drag.y;drag.x=x;drag.y=y}draw()};
-cv.onpointerup=()=>{drag=null};
+cv.onpointerup=cv.onpointercancel=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)G=null;drag=null};
 cv.addEventListener('wheel',e=>{const[x,y]=pt(e),i=polys().findIndex(p=>inP(p,x,y));if(i<0||!items[i])return;e.preventDefault();
- items[i].s=clamp(items[i].s*(e.deltaY<0?1.08:.93),1,4);if(i==sel)$('#zm').value=items[i].s*100;draw()},{passive:false});
+ const it=items[i],d=e.deltaY||e.deltaX;if(e.shiftKey){setR(it,(it.r||0)+(d<0?5:-5));if(sel!=i){sel=i;thumbs()}}else it.s=clamp(it.s*(d<0?1.08:.93),1,4);if(i==sel)sync();draw()},{passive:false});
 $('#add').onclick=()=>$('#file').click();$('#file').onchange=e=>{add(e.target.files);e.target.value=''};
 addEventListener('dragover',e=>e.preventDefault());addEventListener('drop',e=>{e.preventDefault();add(e.dataTransfer.files)});
 $('#pre').onchange=e=>{const[w,h]=e.target.value.split(',');$('#w').value=w;$('#h').value=h;resize()};
@@ -139,6 +142,15 @@ $('#exp').onclick=async()=>{
  const name='thumbnail.'+(jp?'jpg':'png');let d=null;
  try{d=window.claude&&await claude.use('downloads')}catch(e){}
  if(d){try{await d.save({filename:name,data:blob});return}catch(e){if(e&&e.code=='declined')return}}
+ if(!window.claude){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();return}
  $('#oi').src=URL.createObjectURL(blob);$('#ov').style.display='flex'};
+function setR(it,v){it.r=((v+180)%360+360)%360-180}
+function sync(){const it=items[sel],r=it?it.r||0:0;$('#zm').value=it?it.s*100:100;$('#rt').value=r;$('#rv').textContent=Math.round(r)+'°'}
+function rot(d){const it=items[sel];if(it){setR(it,(it.r||0)+d);sync();draw()}}
+$('#rt').oninput=e=>{const it=items[sel];if(!it)return;let v=+e.target.value;for(const a of[0,90,-90,180,-180])if(Math.abs(v-a)<3)v=a;setR(it,v);sync();draw()};
+$('#rl').onclick=()=>rot(-90);$('#rr').onclick=()=>rot(90);$('#r0').onclick=()=>{const it=items[sel];if(it){it.r=0;sync();draw()}};
+function startG(){drag=null;const a=[...ptrs.values()],mx=(a[0][0]+a[1][0])/2,my=(a[0][1]+a[1][1])/2,i=polys().findIndex(p=>inP(p,mx,my));
+ if(i<0||!items[i]){G=null;return}sel=i;const it=items[i];G={i,d0:Math.hypot(a[0][0]-a[1][0],a[0][1]-a[1][1])||1,a0:Math.atan2(a[1][1]-a[0][1],a[1][0]-a[0][0]),s0:it.s,r0:it.r||0};thumbs();sync();draw()}
+function moveG(){const a=[...ptrs.values()];if(a.length<2)return;const it=items[G.i],d=Math.hypot(a[0][0]-a[1][0],a[0][1]-a[1][1]),an=Math.atan2(a[1][1]-a[0][1],a[1][0]-a[0][0]);it.s=clamp(G.s0*d/G.d0,1,4);setR(it,G.r0+(an-G.a0)*180/Math.PI);sync();draw()}
 resize();gen();
 </script></body></html>
